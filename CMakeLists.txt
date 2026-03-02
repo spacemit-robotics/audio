@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 # Provides: audio_resampler, space_audio
 # Optional: Python bindings (_space_audio)
 
-project(audio VERSION 1.0.0 LANGUAGES CXX)
+project(audio VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,8 +33,33 @@ endif()
 # -------------------------------------------------------
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
-pkg_check_modules(PORTAUDIO portaudio-2.0)
 pkg_check_modules(SAMPLERATE samplerate)
+
+# -------------------------------------------------------
+# PortAudio: build from source (ALSA-only, no JACK/PulseAudio)
+# Avoids Pa_Initialize failures when system PortAudio has
+# PulseAudio/JACK backends but the services are unreachable.
+# -------------------------------------------------------
+include(FetchContent)
+set(PA_USE_ALSA ON CACHE BOOL "" FORCE)
+set(PA_USE_JACK OFF CACHE BOOL "" FORCE)
+set(PA_USE_PULSEAUDIO OFF CACHE BOOL "" FORCE)
+set(PA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(PA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(portaudio
+    GIT_REPOSITORY https://github.com/PortAudio/portaudio.git
+    GIT_TAG v19.7.0
+)
+FetchContent_MakeAvailable(portaudio)
+
+set(PORTAUDIO_FOUND TRUE)
+set(PORTAUDIO_LIBRARIES portaudio_static)
+set(PORTAUDIO_INCLUDE_DIRS ${portaudio_SOURCE_DIR}/include)
+
+# Suppress warnings from third-party PortAudio source
+target_compile_options(portaudio_static PRIVATE -w)
+target_compile_options(portaudio PRIVATE -w)
 
 # -------------------------------------------------------
 # Resampler Library (no dependencies)
@@ -102,7 +127,6 @@ if(PORTAUDIO_FOUND)
             ${PORTAUDIO_LIBRARIES}
             Threads::Threads
     )
-    target_link_directories(space_audio PUBLIC ${PORTAUDIO_LIBRARY_DIRS})
 
     # Namespace alias
     add_library(components::space_audio ALIAS space_audio)
@@ -168,7 +192,6 @@ if(AUDIO_BUILD_PYTHON AND PORTAUDIO_FOUND)
             )
 
             target_link_libraries(_space_audio PRIVATE ${PORTAUDIO_LIBRARIES})
-            target_link_directories(_space_audio PRIVATE ${PORTAUDIO_LIBRARY_DIRS})
 
             set(PYTHON_BINDINGS_ENABLED ON)
             message(STATUS "[audio] Python bindings enabled (${Python3_EXECUTABLE})")
