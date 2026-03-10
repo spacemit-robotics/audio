@@ -11,12 +11,9 @@
 #include <cstdint>
 #include <memory>
 
-// Check if libsamplerate is available (defined by CMake)
-#ifdef USE_LIBSAMPLERATE
-// Forward declaration for libsamplerate
+// Forward declaration for libsamplerate (always present for ABI stability)
 struct SRC_STATE_tag;
 typedef struct SRC_STATE_tag SRC_STATE;
-#endif
 
 /**
  * Resampling method enumeration
@@ -129,10 +126,8 @@ private:
     double ratio_;
     bool initialized_;
 
-#ifdef USE_LIBSAMPLERATE
-    // libsamplerate state (only when available)
-    SRC_STATE* src_state_;
-#endif
+    // libsamplerate state (always present for ABI stability, nullptr when unused)
+    SRC_STATE* src_state_ = nullptr;
 
     // Internal processing methods
     std::vector<float> linearUpsample(const float* input, size_t num_samples);
