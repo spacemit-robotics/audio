@@ -19,9 +19,7 @@ Resampler::Resampler(const Config& config)
     : config_(config)
     , ratio_(static_cast<double>(config.output_sample_rate) / config.input_sample_rate)
     , initialized_(false)
-#ifdef USE_LIBSAMPLERATE
     , src_state_(nullptr)
-#endif
 {
 }
 
@@ -29,22 +27,18 @@ Resampler::~Resampler() {
 #ifdef USE_LIBSAMPLERATE
     if (src_state_) {
         src_delete(src_state_);
-        src_state_ = nullptr;
     }
 #endif
+    src_state_ = nullptr;
 }
 
 Resampler::Resampler(Resampler&& other) noexcept
     : config_(other.config_)
     , ratio_(other.ratio_)
     , initialized_(other.initialized_)
-#ifdef USE_LIBSAMPLERATE
     , src_state_(other.src_state_)
-#endif
 {
-#ifdef USE_LIBSAMPLERATE
     other.src_state_ = nullptr;
-#endif
     other.initialized_ = false;
 }
 
@@ -54,9 +48,9 @@ Resampler& Resampler::operator=(Resampler&& other) noexcept {
         if (src_state_) {
             src_delete(src_state_);
         }
+#endif
         src_state_ = other.src_state_;
         other.src_state_ = nullptr;
-#endif
         config_ = other.config_;
         ratio_ = other.ratio_;
         initialized_ = other.initialized_;
