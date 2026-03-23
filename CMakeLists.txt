@@ -16,6 +16,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(AUDIO_BUILD_PYTHON "Build Python bindings" ON)
 option(AUDIO_BUILD_EXAMPLES "Build examples" ON)
 option(AUDIO_SHARED "Build as shared libraries" OFF)
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
 
 # -------------------------------------------------------
 # Detect build mode: standalone vs component
