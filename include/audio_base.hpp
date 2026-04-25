@@ -12,7 +12,7 @@
 #include <string>
 #include <memory>
 
-namespace SpaceAudio {
+namespace SpacemitAudio {
 
 // ============================================================================
 // Global Configuration
@@ -197,6 +197,6 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace SpaceAudio
+}  // namespace SpacemitAudio
 
 #endif  // AUDIO_BASE_HPP

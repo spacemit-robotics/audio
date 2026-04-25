@@ -4,12 +4,12 @@
  */
 
 /**
- * SpaceAudio Full-Duplex API
+ * SpacemitAudio Full-Duplex API
  *
  * High-level interface for full-duplex audio I/O, designed for AEC applications.
  *
  * Usage:
- *   SpaceAudio::AudioDuplex duplex;
+ *   SpacemitAudio::AudioDuplex duplex;
  *   duplex.SetCallback([](const float* input, float* output, size_t frames, int channels) {
  *       // Process synchronized input/output
  *   });
@@ -24,7 +24,7 @@
 #include <vector>
 #include <string>
 
-namespace SpaceAudio {
+namespace SpacemitAudio {
 
 // ============================================================================
 // AudioDuplex Class
@@ -135,6 +135,6 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace SpaceAudio
+}  // namespace SpacemitAudio
 
 #endif  // AUDIO_DUPLEX_HPP

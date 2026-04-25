@@ -4,7 +4,7 @@
  */
 
 /**
- * SpaceAudio Full-Duplex Implementation
+ * SpacemitAudio Full-Duplex Implementation
  */
 
 #include <cstring>
@@ -15,7 +15,7 @@
 #include "audio_duplex.hpp"
 #include "internal/audio_duplex_stream.hpp"
 
-namespace SpaceAudio {
+namespace SpacemitAudio {
 
 // ============================================================================
 // AudioDuplex Implementation
@@ -131,4 +131,4 @@ std::vector<std::pair<int, std::string>> AudioDuplex::ListOutputDevices() {
     return result;
 }
 
-}  // namespace SpaceAudio
+}  // namespace SpacemitAudio

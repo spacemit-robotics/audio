@@ -1,4 +1,4 @@
-# SpaceAudio API
+# SpacemitAudio API
 
 音频采集和播放库，支持 C++ 和 Python。
 
@@ -7,7 +7,7 @@
 ## C++ API
 
 ```cpp
-namespace SpaceAudio {
+namespace SpacemitAudio {
 
 // =============================================================================
 // 全局配置
@@ -132,14 +132,14 @@ public:
     static std::vector<std::pair<int, std::string>> ListDevices();
 };
 
-}  // namespace SpaceAudio
+}  // namespace SpacemitAudio
 ```
 
 ### C++ 示例
 
 ```cpp
 #include "audio_base.hpp"
-using namespace SpaceAudio;
+using namespace SpacemitAudio;
 
 int main() {
     // 初始化全局配置
@@ -173,10 +173,10 @@ int main() {
 
 ```python
 """
-SpaceAudio Python API
+SpacemitAudio Python API
 """
-import space_audio
-from space_audio import AudioCapture, AudioPlayer
+import spacemit_audio
+from spacemit_audio import AudioCapture, AudioPlayer
 
 # =============================================================================
 # 全局配置
@@ -369,11 +369,11 @@ class AudioPlayer:
 
 ```python
 import time
-import space_audio
-from space_audio import AudioCapture, AudioPlayer
+import spacemit_audio
+from spacemit_audio import AudioCapture, AudioPlayer
 
 # 初始化配置
-space_audio.init(sample_rate=16000, channels=1, chunk_size=3200)
+spacemit_audio.init(sample_rate=16000, channels=1, chunk_size=3200)
 
 # 录音示例 (回调模式)
 chunks = []

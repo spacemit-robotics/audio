@@ -4,7 +4,7 @@
  */
 
 /**
- * SpaceAudio Demo - 录音、播放示例
+ * SpacemitAudio Demo - 录音、播放示例
  *
  * Usage:
  *   ./audio_demo -l                          # 列出设备
@@ -29,8 +29,8 @@
 #include <thread>
 #include <vector>
 
-using SpaceAudio::AudioCapture;
-using SpaceAudio::AudioPlayer;
+using SpacemitAudio::AudioCapture;
+using SpacemitAudio::AudioPlayer;
 
 static std::atomic<bool> g_running{true};
 

@@ -2,10 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 """
-SpaceAudio - 音频采集和播放库
+SpacemitAudio - 音频采集和播放库
 """
 
-from ._space_audio import AudioCapture, AudioPlayer, init, get_config
+from ._spacemit_audio import AudioCapture, AudioPlayer, init, get_config
 
 __all__ = ['AudioCapture', 'AudioPlayer', 'init', 'get_config']
 __version__ = '1.0.0'
