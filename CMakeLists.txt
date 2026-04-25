@@ -143,7 +143,7 @@ if(AUDIO_BUILD_EXAMPLES AND PORTAUDIO_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/examples/audio_demo.cpp
     )
 
-    target_link_libraries(audio_demo PRIVATE spacemit_audio)
+    target_link_libraries(audio_demo PRIVATE spacemit_audio audio_resampler)
 
     set_target_properties(audio_demo PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
