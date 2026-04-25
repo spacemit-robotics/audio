@@ -16,7 +16,7 @@
 #include "audio_base.hpp"
 #include "internal/audio_stream.hpp"
 
-namespace SpaceAudio {
+namespace SpacemitAudio {
 
 // ============================================================================
 // Global Configuration
@@ -355,4 +355,4 @@ std::vector<std::pair<int, std::string>> AudioPlayer::ListDevices() {
     return result;
 }
 
-}  // namespace SpaceAudio
+}  // namespace SpacemitAudio

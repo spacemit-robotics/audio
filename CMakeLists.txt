@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
-# audio component: SpaceAudio - Audio capture and playback library
-# Provides: audio_resampler, space_audio
-# Optional: Python bindings (_space_audio)
+# audio component: SpacemitAudio - Audio capture and playback library
+# Provides: audio_resampler, spacemit_audio
+# Optional: Python bindings (_spacemit_audio)
 
 project(audio VERSION 1.0.0 LANGUAGES C CXX)
 
@@ -98,23 +98,23 @@ add_library(components::audio_resampler ALIAS audio_resampler)
 message(STATUS "[audio] audio_resampler enabled")
 
 # -------------------------------------------------------
-# SpaceAudio Library (main API, requires PortAudio)
+# SpacemitAudio Library (main API, requires PortAudio)
 # -------------------------------------------------------
 if(PORTAUDIO_FOUND)
-    set(SPACE_AUDIO_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/space_audio.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/space_audio_duplex.cpp
+    set(SPACEMIT_AUDIO_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/spacemit_audio.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/spacemit_audio_duplex.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/audio_stream.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/audio_duplex_stream.cpp
     )
 
     if(AUDIO_SHARED)
-        add_library(space_audio SHARED ${SPACE_AUDIO_SOURCES})
+        add_library(spacemit_audio SHARED ${SPACEMIT_AUDIO_SOURCES})
     else()
-        add_library(space_audio STATIC ${SPACE_AUDIO_SOURCES})
+        add_library(spacemit_audio STATIC ${SPACEMIT_AUDIO_SOURCES})
     endif()
 
-    target_include_directories(space_audio
+    target_include_directories(spacemit_audio
         PUBLIC
             $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
             $<INSTALL_INTERFACE:include>
@@ -123,16 +123,16 @@ if(PORTAUDIO_FOUND)
             ${CMAKE_CURRENT_SOURCE_DIR}/include/internal
     )
 
-    target_link_libraries(space_audio
+    target_link_libraries(spacemit_audio
         PUBLIC
             ${PORTAUDIO_LIBRARIES}
             Threads::Threads
     )
 
     # Namespace alias
-    add_library(components::space_audio ALIAS space_audio)
+    add_library(components::spacemit_audio ALIAS spacemit_audio)
 
-    message(STATUS "[audio] space_audio enabled")
+    message(STATUS "[audio] spacemit_audio enabled")
 endif()
 
 # -------------------------------------------------------
@@ -143,7 +143,7 @@ if(AUDIO_BUILD_EXAMPLES AND PORTAUDIO_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/examples/audio_demo.cpp
     )
 
-    target_link_libraries(audio_demo PRIVATE space_audio)
+    target_link_libraries(audio_demo PRIVATE spacemit_audio)
 
     set_target_properties(audio_demo PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
@@ -178,28 +178,28 @@ if(AUDIO_BUILD_PYTHON AND PORTAUDIO_FOUND)
         endif()
 
         if(pybind11_FOUND)
-            pybind11_add_module(_space_audio
+            pybind11_add_module(_spacemit_audio
                 ${CMAKE_CURRENT_SOURCE_DIR}/python/src/bindings.cpp
-                ${CMAKE_CURRENT_SOURCE_DIR}/src/space_audio.cpp
-                ${CMAKE_CURRENT_SOURCE_DIR}/src/space_audio_duplex.cpp
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/spacemit_audio.cpp
+                ${CMAKE_CURRENT_SOURCE_DIR}/src/spacemit_audio_duplex.cpp
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/audio_stream.cpp
                 ${CMAKE_CURRENT_SOURCE_DIR}/src/audio_duplex_stream.cpp
             )
 
-            target_include_directories(_space_audio PRIVATE
+            target_include_directories(_spacemit_audio PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
                 ${CMAKE_CURRENT_SOURCE_DIR}/include/internal
                 ${PORTAUDIO_INCLUDE_DIRS}
             )
 
-            target_link_libraries(_space_audio PRIVATE ${PORTAUDIO_LIBRARIES})
+            target_link_libraries(_spacemit_audio PRIVATE ${PORTAUDIO_LIBRARIES})
 
             set(PYTHON_BINDINGS_ENABLED ON)
             message(STATUS "[audio] Python bindings enabled (${Python3_EXECUTABLE})")
 
             # Generate __init__.py in build directory (avoid dependency on source tree)
-            file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/space_audio/__init__.py"
-                "from ._space_audio import AudioCapture, AudioPlayer, init, get_config\n"
+            file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/spacemit_audio/__init__.py"
+                "from ._spacemit_audio import AudioCapture, AudioPlayer, init, get_config\n"
                 "\n"
                 "__all__ = ['AudioCapture', 'AudioPlayer', 'init', 'get_config']\n"
                 "__version__ = '${PROJECT_VERSION}'\n"
@@ -210,12 +210,12 @@ if(AUDIO_BUILD_PYTHON AND PORTAUDIO_FOUND)
                 OUTPUT_STRIP_TRAILING_WHITESPACE
             )
             add_custom_target(audio-install-python
-                COMMAND ${CMAKE_COMMAND} -E remove_directory ${PYTHON_SITE_PACKAGES}/space_audio
-                COMMAND ${CMAKE_COMMAND} -E make_directory ${PYTHON_SITE_PACKAGES}/space_audio
-                COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/space_audio/__init__.py ${PYTHON_SITE_PACKAGES}/space_audio/
-                COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:_space_audio> ${PYTHON_SITE_PACKAGES}/space_audio/
-                DEPENDS _space_audio
-                COMMENT "Installing space_audio to ${PYTHON_SITE_PACKAGES}/space_audio/"
+                COMMAND ${CMAKE_COMMAND} -E remove_directory ${PYTHON_SITE_PACKAGES}/spacemit_audio
+                COMMAND ${CMAKE_COMMAND} -E make_directory ${PYTHON_SITE_PACKAGES}/spacemit_audio
+                COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/spacemit_audio/__init__.py ${PYTHON_SITE_PACKAGES}/spacemit_audio/
+                COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:_spacemit_audio> ${PYTHON_SITE_PACKAGES}/spacemit_audio/
+                DEPENDS _spacemit_audio
+                COMMENT "Installing spacemit_audio to ${PYTHON_SITE_PACKAGES}/spacemit_audio/"
             )
         else()
             message(STATUS "[audio] Python bindings disabled (pybind11 not found)")
@@ -259,10 +259,10 @@ install(
     DESTINATION ${AUDIO_INSTALL_INCLUDEDIR}
 )
 
-# Install space_audio (if PortAudio available)
+# Install spacemit_audio (if PortAudio available)
 if(PORTAUDIO_FOUND)
     install(
-        TARGETS space_audio
+        TARGETS spacemit_audio
         EXPORT ComponentsTargets
         ARCHIVE DESTINATION ${AUDIO_INSTALL_LIBDIR}
         LIBRARY DESTINATION ${AUDIO_INSTALL_LIBDIR}
@@ -287,13 +287,13 @@ if(PORTAUDIO_FOUND)
     # Install Python bindings
     if(PYTHON_BINDINGS_ENABLED)
         install(
-            TARGETS _space_audio
-            LIBRARY DESTINATION ${AUDIO_INSTALL_PYTHONDIR}/space_audio
+            TARGETS _spacemit_audio
+            LIBRARY DESTINATION ${AUDIO_INSTALL_PYTHONDIR}/spacemit_audio
         )
 
         install(
-            FILES ${CMAKE_CURRENT_BINARY_DIR}/space_audio/__init__.py
-            DESTINATION ${AUDIO_INSTALL_PYTHONDIR}/space_audio
+            FILES ${CMAKE_CURRENT_BINARY_DIR}/spacemit_audio/__init__.py
+            DESTINATION ${AUDIO_INSTALL_PYTHONDIR}/spacemit_audio
         )
     endif()
 endif()
@@ -305,8 +305,8 @@ if(AUDIO_STANDALONE AND PYTHON_BINDINGS_ENABLED)
     # Use CMAKE_LIBRARY_OUTPUT_DIRECTORY if set (e.g., by pip wheel build)
     # Otherwise output to source tree for local development
     if(NOT CMAKE_LIBRARY_OUTPUT_DIRECTORY)
-        set_target_properties(_space_audio PROPERTIES
-            LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/python/space_audio
+        set_target_properties(_spacemit_audio PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/python/spacemit_audio
         )
     endif()
 endif()
@@ -318,7 +318,7 @@ message(STATUS "")
 message(STATUS "[audio] Build Summary:")
 message(STATUS "  Mode:           ${AUDIO_STANDALONE}")
 message(STATUS "  audio_resampler: ON")
-message(STATUS "  space_audio:     ${PORTAUDIO_FOUND}")
+message(STATUS "  spacemit_audio:     ${PORTAUDIO_FOUND}")
 message(STATUS "  Examples:        ${AUDIO_BUILD_EXAMPLES}")
 message(STATUS "  Python:          ${PYTHON_BINDINGS_ENABLED}")
 message(STATUS "")

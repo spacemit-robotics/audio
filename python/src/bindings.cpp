@@ -19,12 +19,12 @@ namespace py = pybind11;
 
 void py_init(int sample_rate, int channels, int chunk_size,
             int capture_device, int player_device) {
-    SpaceAudio::Init(sample_rate, channels, chunk_size,
+    SpacemitAudio::Init(sample_rate, channels, chunk_size,
                     capture_device, player_device);
 }
 
 py::dict py_get_config() {
-    SpaceAudio::AudioConfig cfg = SpaceAudio::GetConfig();
+    SpacemitAudio::AudioConfig cfg = SpacemitAudio::GetConfig();
     py::dict result;
     result["sample_rate"] = cfg.sample_rate;
     result["channels"] = cfg.channels;
@@ -80,7 +80,7 @@ public:
     }
 
     static py::list list_devices() {
-        auto devices = SpaceAudio::AudioCapture::ListDevices();
+        auto devices = SpacemitAudio::AudioCapture::ListDevices();
         py::list result;
         for (const auto& [idx, name] : devices) {
             result.append(py::make_tuple(idx, name));
@@ -89,7 +89,7 @@ public:
     }
 
 private:
-    SpaceAudio::AudioCapture capture_;
+    SpacemitAudio::AudioCapture capture_;
     py::function py_callback_;
 };
 
@@ -134,7 +134,7 @@ public:
     }
 
     static py::list list_devices() {
-        auto devices = SpaceAudio::AudioPlayer::ListDevices();
+        auto devices = SpacemitAudio::AudioPlayer::ListDevices();
         py::list result;
         for (const auto& [idx, name] : devices) {
             result.append(py::make_tuple(idx, name));
@@ -143,14 +143,14 @@ public:
     }
 
 private:
-    SpaceAudio::AudioPlayer player_;
+    SpacemitAudio::AudioPlayer player_;
 };
 
 // ============================================================================
 // 模块定义
 // ============================================================================
-PYBIND11_MODULE(_space_audio, m) {
-    m.doc() = "SpaceAudio Python bindings";
+PYBIND11_MODULE(_spacemit_audio, m) {
+    m.doc() = "SpacemitAudio Python bindings";
 
     // Module-level functions
     m.def("init", &py_init,
