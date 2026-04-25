@@ -202,6 +202,7 @@ target_link_libraries(your_target PRIVATE spacemit_audio)
 - **K1 平台声卡采样率限制**：snd-es8326 声卡默认只支持 48kHz 采样率的录音和播放。如果使用其他采样率（如 16kHz），需要通过 Resampler 进行重采样。
 - **K3 平台声卡配置**：snd-es8326 无基座，需要自行配置外接麦克风和扬声器。
 - **Failed to open stream: Invalid sample rate**：采样率与声卡不匹配。使用 `cat /proc/asound/card0/stream0`（card 后的数字根据实际声卡编号调整）查看声卡支持的输入输出采样率，确保配置的采样率在支持列表中。
+- **播放声音速度异常**：WAV 采样率与播放配置不一致。使用 `audio_demo play` 的重采样参数，或在应用中显式重采样。
 
 ## 版本与发布
 
