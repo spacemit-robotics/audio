@@ -4,6 +4,8 @@
  */
 
 #include <portaudio.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -28,17 +30,29 @@ namespace {
     bool ensurePortAudioInitialized() {
         std::lock_guard<std::mutex> lock(g_pa_mutex);
         if (g_pa_ref_count == 0) {
-            // Suppress ALSA error messages on Linux
+            // 在 Pa_Initialize() 周围把 fd 2 重定向到 /dev/null 来压制 ALSA 警告。
+            // 之前实现用的是 freopen("/dev/null") + freopen("/dev/tty")，但
+            // 在没有 controlling tty 的环境（daemon、systemd、非交互 ssh、cron）
+            // 下后一个 freopen 会失败，stderr FILE 永久失效，导致后续所有
+            // std::cerr 输出全部丢失。改为 dup/dup2 操作 fd，不动 stderr FILE。
             #ifndef __APPLE__
-            FILE* null_file = freopen("/dev/null", "w", stderr);
-            (void)null_file;
+            int saved_stderr = dup(fileno(stderr));
+            int devnull = ::open("/dev/null", O_WRONLY);
+            if (devnull >= 0) {
+                fflush(stderr);
+                dup2(devnull, fileno(stderr));
+                ::close(devnull);
+            }
             #endif
 
             PaError err = Pa_Initialize();
 
             #ifndef __APPLE__
-            FILE* tty_file = freopen("/dev/tty", "w", stderr);
-            (void)tty_file;
+            if (saved_stderr >= 0) {
+                fflush(stderr);
+                dup2(saved_stderr, fileno(stderr));
+                ::close(saved_stderr);
+            }
             #endif
 
             if (err != paNoError) {
