@@ -101,9 +101,10 @@ public:
     explicit PyAudioPlayer(int device_index = -1)
         : player_(device_index) {}
 
-    bool start(int sample_rate = -1, int channels = -1) {
+    bool start(int sample_rate = -1, int channels = -1,
+            int frames_per_buffer = -1) {
         py::gil_scoped_release release;
-        return player_.Start(sample_rate, channels);
+        return player_.Start(sample_rate, channels, frames_per_buffer);
     }
 
     bool write(py::bytes data) {
@@ -187,7 +188,8 @@ PYBIND11_MODULE(_spacemit_audio, m) {
         .def(py::init<int>(), py::arg("device_index") = -1)
         .def("start", &PyAudioPlayer::start,
                 py::arg("sample_rate") = -1,
-                py::arg("channels") = -1)
+                py::arg("channels") = -1,
+                py::arg("frames_per_buffer") = -1)
         .def("write", &PyAudioPlayer::write, py::arg("data"))
         .def("play_file", &PyAudioPlayer::play_file, py::arg("file_path"))
         .def("stop", &PyAudioPlayer::stop)

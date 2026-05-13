@@ -193,10 +193,15 @@ AudioPlayer::~AudioPlayer() {
 }
 
 bool AudioPlayer::Start(int sample_rate, int channels) {
+    return Start(sample_rate, channels, 256);
+}
+
+bool AudioPlayer::Start(int sample_rate, int channels, int frames_per_buffer) {
     // Use global config for unspecified parameters
     AudioConfig cfg = GetConfig();
     if (sample_rate <= 0) sample_rate = cfg.sample_rate;
     if (channels <= 0) channels = cfg.channels;
+    if (frames_per_buffer <= 0) frames_per_buffer = 256;
 
     impl_->sample_rate = sample_rate;
     impl_->channels = channels;
@@ -204,7 +209,7 @@ bool AudioPlayer::Start(int sample_rate, int channels) {
     AudioOutputConfig config;
     config.sample_rate = sample_rate;
     config.channels = channels;
-    config.frames_per_buffer = 256;
+    config.frames_per_buffer = frames_per_buffer;
     config.device_index = impl_->device_index;
 
     if (!impl_->stream.open(config)) {

@@ -106,6 +106,15 @@ public:
     bool Start(int sample_rate = -1, int channels = -1);
 
     /**
+     * 启动播放流，并指定 PortAudio 输出缓冲帧数
+     * @param sample_rate 采样率，-1 使用全局配置
+     * @param channels 声道数，-1 使用全局配置
+     * @param frames_per_buffer 输出缓冲帧数，<=0 使用默认 256
+     * @return 是否成功
+     */
+    bool Start(int sample_rate, int channels, int frames_per_buffer);
+
+    /**
      * [核心] 写入音频数据播放
      * @param data PCM16 little-endian 字节流
      * @param size 字节数
@@ -297,13 +306,15 @@ class AudioPlayer:
         """
         pass
 
-    def start(self, sample_rate: int = -1, channels: int = -1) -> bool:
+    def start(self, sample_rate: int = -1, channels: int = -1,
+              frames_per_buffer: int = -1) -> bool:
         """
         启动播放流
 
         Args:
             sample_rate: 采样率，-1 使用全局配置
             channels: 声道数，-1 使用全局配置
+            frames_per_buffer: 输出缓冲帧数，<=0 使用默认 256
 
         Returns:
             bool: 是否成功启动

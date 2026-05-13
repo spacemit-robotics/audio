@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -626,6 +627,14 @@ int AudioOutputStream::write(const float* data, size_t frames) {
     }
 
     PaError err = Pa_WriteStream(static_cast<PaStream*>(stream_), data, frames);
+    if (err == paOutputUnderflowed) {
+        static std::atomic<int> underflow_count{0};
+        int count = ++underflow_count;
+        if (count == 1 || count % 50 == 0) {
+            std::cerr << "[AudioOutputStream] Write underflowed (count="
+                << count << ")" << std::endl;
+        }
+    }
     if (err != paNoError && err != paOutputUnderflowed) {
         std::cerr << "[AudioOutputStream] Write failed: " << Pa_GetErrorText(err) << std::endl;
         return -1;
