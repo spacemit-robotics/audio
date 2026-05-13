@@ -150,6 +150,15 @@ public:
     bool Start(int sample_rate = -1, int channels = -1);
 
     /**
+     * Start playback stream with explicit output buffer size
+     * @param sample_rate Sample rate in Hz (-1 = use global config)
+     * @param channels Number of channels (-1 = use global config)
+     * @param frames_per_buffer Frames per PortAudio write buffer
+     * @return true on success
+     */
+    bool Start(int sample_rate, int channels, int frames_per_buffer);
+
+    /**
      * Write PCM16 data for playback
      * @param data PCM16 little-endian bytes
      * @return true on success
