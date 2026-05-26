@@ -134,6 +134,7 @@ bool AudioCapture::Start(int sample_rate, int channels, int chunk_size) {
     config.channels = channels;
     config.frames_per_buffer = frames_per_buffer;
     config.device_index = impl_->device_index;
+    config.format = AudioSampleFormat::INT16;
 
     if (!impl_->stream.open(config)) {
         return false;
@@ -211,6 +212,7 @@ bool AudioPlayer::Start(int sample_rate, int channels, int frames_per_buffer) {
     config.channels = channels;
     config.frames_per_buffer = frames_per_buffer;
     config.device_index = impl_->device_index;
+    config.format = AudioSampleFormat::INT16;
 
     if (!impl_->stream.open(config)) {
         return false;

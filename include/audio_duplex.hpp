@@ -55,6 +55,13 @@ public:
         size_t frames,
         int channels)>;
 
+    using CallbackEx = std::function<void(
+        const float* input,
+        float* output,
+        size_t frames,
+        int input_channels,
+        int output_channels)>;
+
     /**
      * Constructor
      *
@@ -79,6 +86,12 @@ public:
      */
     void SetCallback(Callback cb);
 
+    /**
+     * Set an extended callback for streams with different input/output
+     * channel counts.
+     */
+    void SetCallbackEx(CallbackEx cb);
+
     // -------------------------------------------------------------------------
     // Lifecycle
     // -------------------------------------------------------------------------
@@ -92,6 +105,13 @@ public:
      * @return true on success
      */
     bool Start(int sample_rate = 48000, int channels = 1, int frames_per_buffer = 480);
+
+    /**
+     * Start full-duplex audio processing with independent input/output
+     * channel counts.
+     */
+    bool Start(int sample_rate, int input_channels, int output_channels,
+        int frames_per_buffer);
 
     /**
      * Stop audio processing
@@ -111,6 +131,8 @@ public:
 
     int GetSampleRate() const;
     int GetChannels() const;
+    int GetInputChannels() const;
+    int GetOutputChannels() const;
     int GetInputDevice() const;
     int GetOutputDevice() const;
 

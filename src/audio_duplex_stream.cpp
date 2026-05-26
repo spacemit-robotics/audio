@@ -26,8 +26,21 @@
 // ============================================================================
 
 namespace {
+    constexpr size_t kDefaultCallbackBufferFrames = 4096;
+
     static int g_pa_ref_count = 0;
     static std::mutex g_pa_mutex;
+
+    size_t callbackBufferFrames(int frames_per_buffer) {
+        return frames_per_buffer > 0 ?
+            static_cast<size_t>(frames_per_buffer) : kDefaultCallbackBufferFrames;
+    }
+
+    #ifdef __riscv
+    bool isMisalignedFloat(const void* ptr) {
+        return ptr && (reinterpret_cast<uintptr_t>(ptr) & 0x03);
+    }
+    #endif
 
     bool ensurePortAudioInitialized() {
         std::lock_guard<std::mutex> lock(g_pa_mutex);
@@ -73,9 +86,12 @@ namespace {
 AudioDuplexStream::AudioDuplexStream()
     : stream_(nullptr)
     , callback_(nullptr)
+    , callback_ex_(nullptr)
     , user_data_(nullptr)
     , actual_sample_rate_(0)
     , actual_channels_(0)
+    , actual_input_channels_(0)
+    , actual_output_channels_(0)
     , input_device_index_(-1)
     , output_device_index_(-1)
     , is_running_(false)
@@ -90,14 +106,18 @@ AudioDuplexStream::~AudioDuplexStream() {
 AudioDuplexStream::AudioDuplexStream(AudioDuplexStream&& other) noexcept
     : stream_(other.stream_)
     , callback_(std::move(other.callback_))
+    , callback_ex_(std::move(other.callback_ex_))
     , user_data_(other.user_data_)
     , actual_sample_rate_(other.actual_sample_rate_)
     , actual_channels_(other.actual_channels_)
+    , actual_input_channels_(other.actual_input_channels_)
+    , actual_output_channels_(other.actual_output_channels_)
     , input_device_index_(other.input_device_index_)
     , output_device_index_(other.output_device_index_)
     , is_running_(other.is_running_.load())
     , is_open_(other.is_open_.load())
     , aligned_input_buffer_(std::move(other.aligned_input_buffer_))
+    , aligned_output_buffer_(std::move(other.aligned_output_buffer_))
     , frames_per_buffer_(other.frames_per_buffer_) {
     other.stream_ = nullptr;
     other.is_running_.store(false);
@@ -110,14 +130,18 @@ AudioDuplexStream& AudioDuplexStream::operator=(AudioDuplexStream&& other) noexc
         close();
         stream_ = other.stream_;
         callback_ = std::move(other.callback_);
+        callback_ex_ = std::move(other.callback_ex_);
         user_data_ = other.user_data_;
         actual_sample_rate_ = other.actual_sample_rate_;
         actual_channels_ = other.actual_channels_;
+        actual_input_channels_ = other.actual_input_channels_;
+        actual_output_channels_ = other.actual_output_channels_;
         input_device_index_ = other.input_device_index_;
         output_device_index_ = other.output_device_index_;
         is_running_.store(other.is_running_.load());
         is_open_.store(other.is_open_.load());
         aligned_input_buffer_ = std::move(other.aligned_input_buffer_);
+        aligned_output_buffer_ = std::move(other.aligned_output_buffer_);
         frames_per_buffer_ = other.frames_per_buffer_;
 
         other.stream_ = nullptr;
@@ -129,7 +153,24 @@ AudioDuplexStream& AudioDuplexStream::operator=(AudioDuplexStream&& other) noexc
 }
 
 void AudioDuplexStream::setCallback(AudioDuplexCallback callback, void* user_data) {
+    if (callback && is_open_.load() &&
+        actual_input_channels_ != actual_output_channels_) {
+        std::cerr << "[AudioDuplexStream] Legacy callback requires equal input/output "
+            << "channels; use setCallbackEx for asymmetric duplex streams"
+            << std::endl;
+        callback_ = nullptr;
+        callback_ex_ = nullptr;
+        user_data_ = nullptr;
+        return;
+    }
     callback_ = std::move(callback);
+    callback_ex_ = nullptr;
+    user_data_ = user_data;
+}
+
+void AudioDuplexStream::setCallbackEx(AudioDuplexCallbackEx callback, void* user_data) {
+    callback_ = nullptr;
+    callback_ex_ = std::move(callback);
     user_data_ = user_data;
 }
 
@@ -143,35 +184,63 @@ int AudioDuplexStream::paCallback(const void* input_buffer,
     (void)status_flags;
 
     AudioDuplexStream* self = static_cast<AudioDuplexStream*>(user_data);
-    if (!self || !self->callback_) {
+    if (!self || (!self->callback_ && !self->callback_ex_)) {
         // Fill output with silence if no callback
         if (output_buffer) {
+            const int output_channels = self ? self->actual_output_channels_ : 1;
             std::memset(output_buffer, 0,
-                        frames_per_buffer * self->actual_channels_ * sizeof(float));
+                frames_per_buffer * output_channels * sizeof(float));
         }
         return paContinue;
     }
 
     const float* input = static_cast<const float*>(input_buffer);
     float* output = static_cast<float*>(output_buffer);
+    bool copy_output = false;
 
 #ifdef __riscv
     // RISC-V 严格对齐模式：检查 input_buffer 是否 4 字节对齐 (float 要求)
     // 如果未对齐，复制到预分配的对齐缓冲区
-    if (input_buffer && (reinterpret_cast<uintptr_t>(input_buffer) & 0x03)) {
-        size_t buffer_size = frames_per_buffer * self->actual_channels_;
+    if (isMisalignedFloat(input_buffer)) {
+        size_t buffer_size = frames_per_buffer * self->actual_input_channels_;
         if (self->aligned_input_buffer_.size() < buffer_size) {
-            self->aligned_input_buffer_.resize(buffer_size);
+            if (output) {
+                std::memset(output, 0,
+                    frames_per_buffer * self->actual_output_channels_ * sizeof(float));
+            }
+            return paContinue;
         }
         // 使用 memcpy 逐字节复制，避免对齐问题
         std::memcpy(self->aligned_input_buffer_.data(), input_buffer,
                     buffer_size * sizeof(float));
         input = self->aligned_input_buffer_.data();
     }
+    if (isMisalignedFloat(output_buffer)) {
+        size_t buffer_size = frames_per_buffer * self->actual_output_channels_;
+        if (self->aligned_output_buffer_.size() < buffer_size) {
+            std::memset(output_buffer, 0, buffer_size * sizeof(float));
+            return paContinue;
+        }
+        output = self->aligned_output_buffer_.data();
+        copy_output = true;
+    }
 #endif
 
     // Call user callback with synchronized input/output
-    self->callback_(input, output, frames_per_buffer, self->actual_channels_, self->user_data_);
+    if (self->callback_ex_) {
+        self->callback_ex_(input, output, frames_per_buffer,
+            self->actual_input_channels_,
+            self->actual_output_channels_,
+            self->user_data_);
+    } else {
+        self->callback_(input, output, frames_per_buffer,
+                        self->actual_channels_, self->user_data_);
+    }
+
+    if (copy_output && output_buffer) {
+        std::memcpy(output_buffer, self->aligned_output_buffer_.data(),
+            frames_per_buffer * self->actual_output_channels_ * sizeof(float));
+    }
 
     return paContinue;
 }
@@ -244,24 +313,40 @@ bool AudioDuplexStream::open(const AudioDuplexConfig& config) {
                 << std::endl;
 
     // Verify channel count
-    int channels = config.channels;
-    if (channels > inputInfo->maxInputChannels) {
-        std::cerr << "[AudioDuplexStream] Requested " << channels
+    int input_channels = config.input_channels > 0 ? config.input_channels : config.channels;
+    int output_channels = config.output_channels > 0 ? config.output_channels : config.channels;
+    if (input_channels > inputInfo->maxInputChannels) {
+        std::cerr << "[AudioDuplexStream] Requested " << input_channels
                     << " channels but input device only has "
                     << inputInfo->maxInputChannels << std::endl;
-        channels = inputInfo->maxInputChannels;
+        releasePortAudio();
+        return false;
     }
-    if (channels > outputInfo->maxOutputChannels) {
-        std::cerr << "[AudioDuplexStream] Requested " << channels
+    if (output_channels > outputInfo->maxOutputChannels) {
+        std::cerr << "[AudioDuplexStream] Requested " << output_channels
                     << " channels but output device only has "
                     << outputInfo->maxOutputChannels << std::endl;
-        channels = outputInfo->maxOutputChannels;
+        releasePortAudio();
+        return false;
+    }
+    if (input_channels <= 0 || output_channels <= 0) {
+        std::cerr << "[AudioDuplexStream] Invalid channel count: input="
+            << input_channels << ", output=" << output_channels << std::endl;
+        releasePortAudio();
+        return false;
+    }
+    if (callback_ && input_channels != output_channels) {
+        std::cerr << "[AudioDuplexStream] Legacy callback requires equal input/output "
+            << "channels; use setCallbackEx for asymmetric duplex streams"
+            << std::endl;
+        releasePortAudio();
+        return false;
     }
 
     // Setup input parameters
     PaStreamParameters inputParams;
     inputParams.device = inputDevice;
-    inputParams.channelCount = channels;
+    inputParams.channelCount = input_channels;
     inputParams.sampleFormat = paFloat32;
     // Use higher latency on Linux to avoid ALSA issues
     #ifdef __linux__
@@ -274,7 +359,7 @@ bool AudioDuplexStream::open(const AudioDuplexConfig& config) {
     // Setup output parameters
     PaStreamParameters outputParams;
     outputParams.device = outputDevice;
-    outputParams.channelCount = channels;
+    outputParams.channelCount = output_channels;
     outputParams.sampleFormat = paFloat32;
     #ifdef __linux__
     outputParams.suggestedLatency = outputInfo->defaultHighOutputLatency;
@@ -309,17 +394,23 @@ bool AudioDuplexStream::open(const AudioDuplexConfig& config) {
     input_device_index_ = inputDevice;
     output_device_index_ = outputDevice;
     actual_sample_rate_ = config.sample_rate;
-    actual_channels_ = channels;
+    actual_channels_ = input_channels;
+    actual_input_channels_ = input_channels;
+    actual_output_channels_ = output_channels;
     frames_per_buffer_ = config.frames_per_buffer;
     is_open_.store(true);
 
 #ifdef __riscv
     // RISC-V: 预分配对齐缓冲区，避免回调中动态分配
-    aligned_input_buffer_.resize(config.frames_per_buffer * channels);
+    aligned_input_buffer_.resize(
+        callbackBufferFrames(config.frames_per_buffer) * input_channels);
+    aligned_output_buffer_.resize(
+        callbackBufferFrames(config.frames_per_buffer) * output_channels);
 #endif
 
     std::cout << "[AudioDuplexStream] Opened: " << actual_sample_rate_ << "Hz, "
-                << actual_channels_ << " channels, "
+                << actual_input_channels_ << " input channels, "
+                << actual_output_channels_ << " output channels, "
                 << config.frames_per_buffer << " frames/buffer" << std::endl;
     return true;
 }

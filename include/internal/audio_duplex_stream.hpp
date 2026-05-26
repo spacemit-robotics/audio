@@ -38,6 +38,8 @@
 struct AudioDuplexConfig {
     int sample_rate = 48000;           // Sample rate (Hz), 48000 recommended for AEC
     int channels = 1;                  // Number of channels (1=mono, 2=stereo)
+    int input_channels = 0;            // 0 = use channels
+    int output_channels = 0;           // 0 = use channels
 #ifdef __linux__
     int frames_per_buffer = 960;       // Linux: 20ms @ 48kHz (避免 ALSA underrun)
 #else
@@ -73,6 +75,15 @@ using AudioDuplexCallback = std::function<void(
     void* user_data
 )>;
 
+using AudioDuplexCallbackEx = std::function<void(
+    const float* input,
+    float* output,
+    size_t frames,
+    int input_channels,
+    int output_channels,
+    void* user_data
+)>;
+
 // ============================================================================
 // AudioDuplexStream Class
 // ============================================================================
@@ -97,6 +108,7 @@ public:
      * Must be called before open()
      */
     void setCallback(AudioDuplexCallback callback, void* user_data = nullptr);
+    void setCallbackEx(AudioDuplexCallbackEx callback, void* user_data = nullptr);
 
     // -------------------------------------------------------------------------
     // Lifecycle
@@ -135,6 +147,8 @@ public:
 
     int getSampleRate() const { return actual_sample_rate_; }
     int getChannels() const { return actual_channels_; }
+    int getInputChannels() const { return actual_input_channels_; }
+    int getOutputChannels() const { return actual_output_channels_; }
     int getInputDeviceIndex() const { return input_device_index_; }
     int getOutputDeviceIndex() const { return output_device_index_; }
 
@@ -177,18 +191,22 @@ private:
 
     void* stream_;                     // PaStream*
     AudioDuplexCallback callback_;
+    AudioDuplexCallbackEx callback_ex_;
     void* user_data_;
 
     int actual_sample_rate_;
     int actual_channels_;
+    int actual_input_channels_;
+    int actual_output_channels_;
     int input_device_index_;
     int output_device_index_;
 
     std::atomic<bool> is_running_;
     std::atomic<bool> is_open_;
 
-    // RISC-V alignment buffer for unaligned input data from PortAudio
+    // RISC-V alignment buffers for unaligned PortAudio data
     std::vector<float> aligned_input_buffer_;
+    std::vector<float> aligned_output_buffer_;
     int frames_per_buffer_;
 };
 

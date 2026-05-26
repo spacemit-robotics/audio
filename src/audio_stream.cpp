@@ -25,8 +25,63 @@
 // Ensures Pa_Initialize/Pa_Terminate are called correctly across all streams
 // ============================================================================
 namespace {
+    constexpr size_t kDefaultCallbackBufferFrames = 4096;
+
     static int g_pa_ref_count = 0;
     static std::mutex g_pa_mutex;
+
+    size_t callbackBufferFrames(int frames_per_buffer) {
+        return frames_per_buffer > 0 ?
+            static_cast<size_t>(frames_per_buffer) : kDefaultCallbackBufferFrames;
+    }
+
+    #ifdef __riscv
+    bool isMisalignedFloat(const void* ptr) {
+        return ptr && (reinterpret_cast<uintptr_t>(ptr) & 0x03);
+    }
+    #endif
+
+    PaSampleFormat toPortAudioFormat(AudioSampleFormat format) {
+        switch (format) {
+            case AudioSampleFormat::INT16:
+                return paInt16;
+            case AudioSampleFormat::INT32:
+                return paInt32;
+            case AudioSampleFormat::FLOAT32:
+            default:
+                return paFloat32;
+        }
+    }
+
+    size_t bytesPerSample(AudioSampleFormat format) {
+        switch (format) {
+            case AudioSampleFormat::INT16:
+                return sizeof(int16_t);
+            case AudioSampleFormat::INT32:
+                return sizeof(int32_t);
+            case AudioSampleFormat::FLOAT32:
+            default:
+                return sizeof(float);
+        }
+    }
+
+    int finishBlockingWrite(PaError err, size_t frames) {
+        if (err == paOutputUnderflowed) {
+            static std::atomic<int> underflow_count{0};
+            int count = ++underflow_count;
+            if (count == 1 || count % 50 == 0) {
+                std::cerr << "[AudioOutputStream] Write underflowed (count="
+                    << count << ")" << std::endl;
+            }
+        }
+        if (err != paNoError && err != paOutputUnderflowed) {
+            std::cerr << "[AudioOutputStream] Write failed: "
+                << Pa_GetErrorText(err) << std::endl;
+            return -1;
+        }
+
+        return static_cast<int>(frames);
+    }
 
     bool ensurePortAudioInitialized() {
         std::lock_guard<std::mutex> lock(g_pa_mutex);
@@ -88,6 +143,7 @@ AudioInputStream::AudioInputStream()
     , actual_sample_rate_(0)
     , actual_channels_(0)
     , device_index_(-1)
+    , actual_format_(AudioSampleFormat::FLOAT32)
     , is_running_(false)
     , is_open_(false) {
 }
@@ -103,6 +159,8 @@ AudioInputStream::AudioInputStream(AudioInputStream&& other) noexcept
     , actual_sample_rate_(other.actual_sample_rate_)
     , actual_channels_(other.actual_channels_)
     , device_index_(other.device_index_)
+    , actual_format_(other.actual_format_)
+    , float_buffer_(std::move(other.float_buffer_))
     , is_running_(other.is_running_.load())
     , is_open_(other.is_open_.load()) {
     other.stream_ = nullptr;
@@ -119,6 +177,8 @@ AudioInputStream& AudioInputStream::operator=(AudioInputStream&& other) noexcept
         actual_sample_rate_ = other.actual_sample_rate_;
         actual_channels_ = other.actual_channels_;
         device_index_ = other.device_index_;
+        actual_format_ = other.actual_format_;
+        float_buffer_ = std::move(other.float_buffer_);
         is_running_.store(other.is_running_.load());
         is_open_.store(other.is_open_.load());
 
@@ -148,7 +208,46 @@ int AudioInputStream::paCallback(const void* input_buffer, void* output_buffer,
         return paContinue;
     }
 
-    const float* input = static_cast<const float*>(input_buffer);
+    const size_t samples = frames_per_buffer * self->actual_channels_;
+    const float* input = nullptr;
+    if (self->actual_format_ == AudioSampleFormat::INT16) {
+        const uint8_t* pcm = static_cast<const uint8_t*>(input_buffer);
+        if (self->float_buffer_.size() < samples) {
+            return paContinue;
+        }
+        for (size_t i = 0; i < samples; ++i) {
+            int16_t sample = 0;
+            std::memcpy(&sample, pcm + i * sizeof(sample), sizeof(sample));
+            self->float_buffer_[i] = static_cast<float>(sample) / 32768.0f;
+        }
+        input = self->float_buffer_.data();
+    } else if (self->actual_format_ == AudioSampleFormat::INT32) {
+        const uint8_t* pcm = static_cast<const uint8_t*>(input_buffer);
+        if (self->float_buffer_.size() < samples) {
+            return paContinue;
+        }
+        for (size_t i = 0; i < samples; ++i) {
+            int32_t sample = 0;
+            std::memcpy(&sample, pcm + i * sizeof(sample), sizeof(sample));
+            self->float_buffer_[i] = static_cast<float>(sample) / 2147483648.0f;
+        }
+        input = self->float_buffer_.data();
+    } else {
+        #ifdef __riscv
+        if (isMisalignedFloat(input_buffer)) {
+            if (self->float_buffer_.size() < samples) {
+                return paContinue;
+            }
+            std::memcpy(self->float_buffer_.data(), input_buffer,
+                samples * sizeof(float));
+            input = self->float_buffer_.data();
+        } else
+        #endif
+        {
+        input = static_cast<const float*>(input_buffer);
+        }
+    }
+
     self->callback_(input, frames_per_buffer, self->actual_channels_, self->user_data_);
 
     return paContinue;
@@ -197,17 +296,24 @@ bool AudioInputStream::open(const AudioInputConfig& config) {
 
     // Verify channel count
     int channels = config.channels;
+    if (channels <= 0) {
+        std::cerr << "[AudioInputStream] Invalid channel count: "
+            << channels << std::endl;
+        releasePortAudio();
+        return false;
+    }
     if (channels > deviceInfo->maxInputChannels) {
         std::cerr << "[AudioInputStream] Requested " << channels << " channels but device only has "
                     << deviceInfo->maxInputChannels << std::endl;
-        channels = deviceInfo->maxInputChannels;
+        releasePortAudio();
+        return false;
     }
 
     // Setup stream parameters
     PaStreamParameters inputParams;
     inputParams.device = device;
     inputParams.channelCount = channels;
-    inputParams.sampleFormat = paFloat32;
+    inputParams.sampleFormat = toPortAudioFormat(config.format);
     inputParams.suggestedLatency = deviceInfo->defaultLowInputLatency;
     inputParams.hostApiSpecificStreamInfo = nullptr;
 
@@ -231,10 +337,23 @@ bool AudioInputStream::open(const AudioInputConfig& config) {
     device_index_ = device;
     actual_sample_rate_ = config.sample_rate;
     actual_channels_ = channels;
+    actual_format_ = config.format;
+    bool needs_callback_buffer = actual_format_ != AudioSampleFormat::FLOAT32;
+    #ifdef __riscv
+    needs_callback_buffer = true;
+    #endif
+    if (needs_callback_buffer) {
+        const size_t samples =
+            callbackBufferFrames(config.frames_per_buffer) * actual_channels_;
+        float_buffer_.resize(samples);
+    }
     is_open_.store(true);
 
     std::cout << "[AudioInputStream] Opened: " << actual_sample_rate_ << "Hz, "
-                << actual_channels_ << " channels" << std::endl;
+                << actual_channels_ << " channels, "
+                << (actual_format_ == AudioSampleFormat::INT16 ? "int16" :
+                    (actual_format_ == AudioSampleFormat::INT32 ? "int32" : "float32"))
+                << std::endl;
     return true;
 }
 
@@ -357,6 +476,7 @@ AudioOutputStream::AudioOutputStream()
     , actual_sample_rate_(0)
     , actual_channels_(0)
     , device_index_(-1)
+    , actual_format_(AudioSampleFormat::FLOAT32)
     , is_running_(false)
     , is_open_(false)
     , use_callback_mode_(false) {
@@ -373,9 +493,13 @@ AudioOutputStream::AudioOutputStream(AudioOutputStream&& other) noexcept
     , actual_sample_rate_(other.actual_sample_rate_)
     , actual_channels_(other.actual_channels_)
     , device_index_(other.device_index_)
+    , actual_format_(other.actual_format_)
     , is_running_(other.is_running_.load())
     , is_open_(other.is_open_.load())
-    , use_callback_mode_(other.use_callback_mode_) {
+    , use_callback_mode_(other.use_callback_mode_)
+    , float_buffer_(std::move(other.float_buffer_))
+    , int16_buffer_(std::move(other.int16_buffer_))
+    , int32_buffer_(std::move(other.int32_buffer_)) {
     other.stream_ = nullptr;
     other.is_running_.store(false);
     other.is_open_.store(false);
@@ -390,9 +514,13 @@ AudioOutputStream& AudioOutputStream::operator=(AudioOutputStream&& other) noexc
         actual_sample_rate_ = other.actual_sample_rate_;
         actual_channels_ = other.actual_channels_;
         device_index_ = other.device_index_;
+        actual_format_ = other.actual_format_;
         is_running_.store(other.is_running_.load());
         is_open_.store(other.is_open_.load());
         use_callback_mode_ = other.use_callback_mode_;
+        float_buffer_ = std::move(other.float_buffer_);
+        int16_buffer_ = std::move(other.int16_buffer_);
+        int32_buffer_ = std::move(other.int32_buffer_);
 
         other.stream_ = nullptr;
         other.is_running_.store(false);
@@ -417,23 +545,88 @@ int AudioOutputStream::paCallback(const void* input_buffer, void* output_buffer,
     (void)status_flags;
 
     AudioOutputStream* self = static_cast<AudioOutputStream*>(user_data);
-    if (!self || !self->callback_ || !output_buffer) {
+    if (!self) {
+        return paAbort;
+    }
+
+    if (!self->callback_ || !output_buffer) {
         // Fill with silence if no callback
         if (output_buffer) {
-            std::memset(output_buffer, 0, frames_per_buffer * self->actual_channels_ * sizeof(float));
+            std::memset(output_buffer, 0,
+                frames_per_buffer * self->actual_channels_ *
+                    bytesPerSample(self->actual_format_));
         }
         return paContinue;
     }
 
-    float* output = static_cast<float*>(output_buffer);
-    size_t frames_written = self->callback_(output, frames_per_buffer,
-                                            self->actual_channels_, self->user_data_);
+    size_t frames_written = 0;
+    if (self->actual_format_ == AudioSampleFormat::INT16) {
+        const size_t samples = frames_per_buffer * self->actual_channels_;
+        if (self->float_buffer_.size() < samples) {
+            std::memset(output_buffer, 0,
+                samples * bytesPerSample(self->actual_format_));
+            return paContinue;
+        }
+        frames_written = self->callback_(self->float_buffer_.data(), frames_per_buffer,
+            self->actual_channels_, self->user_data_);
+        frames_written = std::min(frames_written, static_cast<size_t>(frames_per_buffer));
+
+        uint8_t* output = static_cast<uint8_t*>(output_buffer);
+        const size_t written_samples = frames_written * self->actual_channels_;
+        for (size_t i = 0; i < written_samples; ++i) {
+            int16_t sample = static_cast<int16_t>(
+                std::clamp(self->float_buffer_[i], -1.0f, 1.0f) * 32767.0f);
+            std::memcpy(output + i * sizeof(sample), &sample, sizeof(sample));
+        }
+    } else if (self->actual_format_ == AudioSampleFormat::INT32) {
+        const size_t samples = frames_per_buffer * self->actual_channels_;
+        if (self->float_buffer_.size() < samples) {
+            std::memset(output_buffer, 0,
+                samples * bytesPerSample(self->actual_format_));
+            return paContinue;
+        }
+        frames_written = self->callback_(self->float_buffer_.data(), frames_per_buffer,
+            self->actual_channels_, self->user_data_);
+        frames_written = std::min(frames_written, static_cast<size_t>(frames_per_buffer));
+
+        uint8_t* output = static_cast<uint8_t*>(output_buffer);
+        const size_t written_samples = frames_written * self->actual_channels_;
+        for (size_t i = 0; i < written_samples; ++i) {
+            int32_t sample = static_cast<int32_t>(
+                std::clamp(self->float_buffer_[i], -1.0f, 1.0f) * 2147483647.0f);
+            std::memcpy(output + i * sizeof(sample), &sample, sizeof(sample));
+        }
+    } else {
+        float* output = static_cast<float*>(output_buffer);
+        bool copy_output = false;
+        #ifdef __riscv
+        if (isMisalignedFloat(output_buffer)) {
+            const size_t samples = frames_per_buffer * self->actual_channels_;
+            if (self->float_buffer_.size() < samples) {
+                std::memset(output_buffer, 0, samples * sizeof(float));
+                return paContinue;
+            }
+            output = self->float_buffer_.data();
+            copy_output = true;
+        }
+        #endif
+        frames_written = self->callback_(output, frames_per_buffer,
+            self->actual_channels_, self->user_data_);
+        frames_written = std::min(frames_written, static_cast<size_t>(frames_per_buffer));
+        if (copy_output && frames_written > 0) {
+            std::memcpy(output_buffer, self->float_buffer_.data(),
+                frames_written * self->actual_channels_ * sizeof(float));
+        }
+    }
 
     // If callback returned less than requested, fill rest with silence
     if (frames_written < frames_per_buffer) {
         size_t remaining = frames_per_buffer - frames_written;
-        std::memset(output + frames_written * self->actual_channels_, 0,
-                    remaining * self->actual_channels_ * sizeof(float));
+        uint8_t* output_bytes = static_cast<uint8_t*>(output_buffer);
+        const size_t offset = frames_written * self->actual_channels_ *
+            bytesPerSample(self->actual_format_);
+        std::memset(output_bytes + offset, 0,
+            remaining * self->actual_channels_ * bytesPerSample(self->actual_format_));
 
         // If callback returned 0, signal end of playback
         if (frames_written == 0) {
@@ -487,17 +680,24 @@ bool AudioOutputStream::open(const AudioOutputConfig& config) {
 
     // Verify channel count
     int channels = config.channels;
+    if (channels <= 0) {
+        std::cerr << "[AudioOutputStream] Invalid channel count: "
+            << channels << std::endl;
+        releasePortAudio();
+        return false;
+    }
     if (channels > deviceInfo->maxOutputChannels) {
         std::cerr << "[AudioOutputStream] Requested " << channels << " channels but device only has "
                     << deviceInfo->maxOutputChannels << std::endl;
-        channels = deviceInfo->maxOutputChannels;
+        releasePortAudio();
+        return false;
     }
 
     // Setup stream parameters
     PaStreamParameters outputParams;
     outputParams.device = device;
     outputParams.channelCount = channels;
-    outputParams.sampleFormat = paFloat32;
+    outputParams.sampleFormat = toPortAudioFormat(config.format);
     outputParams.suggestedLatency = deviceInfo->defaultLowOutputLatency;
     outputParams.hostApiSpecificStreamInfo = nullptr;
 
@@ -536,10 +736,22 @@ bool AudioOutputStream::open(const AudioOutputConfig& config) {
     device_index_ = device;
     actual_sample_rate_ = config.sample_rate;
     actual_channels_ = channels;
+    actual_format_ = config.format;
+    bool needs_callback_buffer = actual_format_ != AudioSampleFormat::FLOAT32;
+    #ifdef __riscv
+    needs_callback_buffer = true;
+    #endif
+    if (use_callback_mode_ && needs_callback_buffer) {
+        const size_t samples =
+            callbackBufferFrames(config.frames_per_buffer) * actual_channels_;
+        float_buffer_.resize(samples);
+    }
     is_open_.store(true);
 
     std::cout << "[AudioOutputStream] Opened: " << actual_sample_rate_ << "Hz, "
                 << actual_channels_ << " channels, "
+                << (actual_format_ == AudioSampleFormat::INT16 ? "int16, " :
+                    (actual_format_ == AudioSampleFormat::INT32 ? "int32, " : "float32, "))
                 << (use_callback_mode_ ? "callback mode" : "write mode") << std::endl;
     return true;
 }
@@ -615,7 +827,8 @@ bool AudioOutputStream::abort() {
 }
 
 int AudioOutputStream::write(const float* data, size_t frames) {
-    if (!is_open_.load() || use_callback_mode_) {
+    std::lock_guard<std::mutex> lock(write_mutex_);
+    if (!is_open_.load() || use_callback_mode_ || !data || frames == 0) {
         return -1;
     }
 
@@ -626,26 +839,63 @@ int AudioOutputStream::write(const float* data, size_t frames) {
         }
     }
 
-    PaError err = Pa_WriteStream(static_cast<PaStream*>(stream_), data, frames);
-    if (err == paOutputUnderflowed) {
-        static std::atomic<int> underflow_count{0};
-        int count = ++underflow_count;
-        if (count == 1 || count % 50 == 0) {
-            std::cerr << "[AudioOutputStream] Write underflowed (count="
-                << count << ")" << std::endl;
+    if (actual_format_ == AudioSampleFormat::INT16) {
+        size_t total_samples = frames * actual_channels_;
+        if (int16_buffer_.size() < total_samples) {
+            int16_buffer_.resize(total_samples);
         }
-    }
-    if (err != paNoError && err != paOutputUnderflowed) {
-        std::cerr << "[AudioOutputStream] Write failed: " << Pa_GetErrorText(err) << std::endl;
-        return -1;
+        for (size_t i = 0; i < total_samples; ++i) {
+            int16_buffer_[i] = static_cast<int16_t>(
+                std::clamp(data[i], -1.0f, 1.0f) * 32767.0f);
+        }
+        PaError err = Pa_WriteStream(static_cast<PaStream*>(stream_),
+            int16_buffer_.data(), frames);
+        return finishBlockingWrite(err, frames);
+    } else if (actual_format_ == AudioSampleFormat::INT32) {
+        size_t total_samples = frames * actual_channels_;
+        if (int32_buffer_.size() < total_samples) {
+            int32_buffer_.resize(total_samples);
+        }
+        for (size_t i = 0; i < total_samples; ++i) {
+            int32_buffer_[i] = static_cast<int32_t>(
+                std::clamp(data[i], -1.0f, 1.0f) * 2147483647.0f);
+        }
+        PaError err = Pa_WriteStream(static_cast<PaStream*>(stream_),
+            int32_buffer_.data(), frames);
+        return finishBlockingWrite(err, frames);
     }
 
-    return static_cast<int>(frames);
+    PaError err = Pa_WriteStream(static_cast<PaStream*>(stream_), data, frames);
+    return finishBlockingWrite(err, frames);
 }
 
 int AudioOutputStream::writeInt16(const int16_t* data, size_t frames) {
-    if (!is_open_.load() || !data || frames == 0) {
+    std::lock_guard<std::mutex> lock(write_mutex_);
+    if (!is_open_.load() || use_callback_mode_ || !data || frames == 0) {
         return -1;
+    }
+
+    if (!is_running_.load()) {
+        if (!start()) {
+            return -1;
+        }
+    }
+
+    if (actual_format_ == AudioSampleFormat::INT16) {
+        PaError err = Pa_WriteStream(static_cast<PaStream*>(stream_), data, frames);
+        return finishBlockingWrite(err, frames);
+    } else if (actual_format_ == AudioSampleFormat::INT32) {
+        size_t total_samples = frames * actual_channels_;
+        if (int32_buffer_.size() < total_samples) {
+            int32_buffer_.resize(total_samples);
+        }
+        for (size_t i = 0; i < total_samples; ++i) {
+            int32_buffer_[i] =
+                static_cast<int32_t>(static_cast<int64_t>(data[i]) * 65536);
+        }
+        PaError err = Pa_WriteStream(static_cast<PaStream*>(stream_),
+            int32_buffer_.data(), frames);
+        return finishBlockingWrite(err, frames);
     }
 
     // Convert int16 to float using pre-allocated buffer
@@ -660,7 +910,9 @@ int AudioOutputStream::writeInt16(const int16_t* data, size_t frames) {
         float_buffer_[i] = static_cast<float>(data[i]) / 32768.0f;
     }
 
-    return write(float_buffer_.data(), frames);
+    PaError err = Pa_WriteStream(static_cast<PaStream*>(stream_),
+        float_buffer_.data(), frames);
+    return finishBlockingWrite(err, frames);
 }
 
 bool AudioOutputStream::isRunning() const {
