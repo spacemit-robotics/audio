@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <functional>
 #include <atomic>
+#include <mutex>
 #include <vector>
 #include <string>
 
@@ -186,6 +187,8 @@ private:
     int actual_sample_rate_ = 0;
     int actual_channels_ = 0;
     int device_index_ = -1;
+    AudioSampleFormat actual_format_ = AudioSampleFormat::FLOAT32;
+    std::vector<float> float_buffer_;
 
     std::atomic<bool> is_running_{false};
     std::atomic<bool> is_open_{false};
@@ -378,11 +381,15 @@ private:
     int actual_sample_rate_ = 0;
     int actual_channels_ = 0;
     int device_index_ = -1;
+    AudioSampleFormat actual_format_ = AudioSampleFormat::FLOAT32;
 
     std::atomic<bool> is_running_{false};
     std::atomic<bool> is_open_{false};
     bool use_callback_mode_ = false;
-    std::vector<float> float_buffer_;  // Pre-allocated buffer for writeInt16() conversion
+    std::mutex write_mutex_;
+    std::vector<float> float_buffer_;
+    std::vector<int16_t> int16_buffer_;
+    std::vector<int32_t> int32_buffer_;
 };
 
 #endif  // __cplusplus
