@@ -159,6 +159,14 @@ int AudioDuplex::GetOutputDevice() const {
     return impl_->stream.getOutputDeviceIndex();
 }
 
+double AudioDuplex::GetLoopDelaySeconds() const {
+    return impl_->stream.getLoopDelaySeconds();
+}
+
+uint64_t AudioDuplex::GetXrunCount() const {
+    return impl_->stream.getXrunCount();
+}
+
 std::vector<std::pair<int, std::string>> AudioDuplex::ListInputDevices() {
     std::vector<std::string> names;
     std::vector<int> indices;

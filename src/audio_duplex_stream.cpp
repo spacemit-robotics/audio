@@ -11,6 +11,8 @@
 
 #include <portaudio.h>
 
+#include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -27,6 +29,12 @@
 
 namespace {
     constexpr size_t kDefaultCallbackBufferFrames = 4096;
+    // Callback loop delays outside (0, 2] s are bogus timestamps and are ignored.
+    constexpr double kMaxPlausibleLoopDelaySeconds = 2.0;
+
+    // The real-time callback stores into these; they must never fall back to a lock.
+    static_assert(std::atomic<double>::is_always_lock_free, "loop delay atomic must be lock-free");
+    static_assert(std::atomic<uint64_t>::is_always_lock_free, "xrun counter atomic must be lock-free");
 
     static int g_pa_ref_count = 0;
     static std::mutex g_pa_mutex;
@@ -116,6 +124,8 @@ AudioDuplexStream::AudioDuplexStream(AudioDuplexStream&& other) noexcept
     , output_device_index_(other.output_device_index_)
     , is_running_(other.is_running_.load())
     , is_open_(other.is_open_.load())
+    , loop_delay_s_(other.loop_delay_s_.load())
+    , xrun_count_(other.xrun_count_.load())
     , aligned_input_buffer_(std::move(other.aligned_input_buffer_))
     , aligned_output_buffer_(std::move(other.aligned_output_buffer_))
     , frames_per_buffer_(other.frames_per_buffer_) {
@@ -140,6 +150,8 @@ AudioDuplexStream& AudioDuplexStream::operator=(AudioDuplexStream&& other) noexc
         output_device_index_ = other.output_device_index_;
         is_running_.store(other.is_running_.load());
         is_open_.store(other.is_open_.load());
+        loop_delay_s_.store(other.loop_delay_s_.load());
+        xrun_count_.store(other.xrun_count_.load());
         aligned_input_buffer_ = std::move(other.aligned_input_buffer_);
         aligned_output_buffer_ = std::move(other.aligned_output_buffer_);
         frames_per_buffer_ = other.frames_per_buffer_;
@@ -180,10 +192,20 @@ int AudioDuplexStream::paCallback(const void* input_buffer,
                                     const PaStreamCallbackTimeInfo* time_info,
                                     PaStreamCallbackFlags status_flags,
                                     void* user_data) {
-    (void)time_info;
-    (void)status_flags;
-
     AudioDuplexStream* self = static_cast<AudioDuplexStream*>(user_data);
+    if (self) {
+        // Real-time thread: only lock-free stores here, no I/O.
+        if (status_flags & (paInputOverflow | paOutputUnderflow)) {
+            self->xrun_count_.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (time_info) {
+            // Capture buffer handed to this callback -> output written here reaches the DAC.
+            const double loop = time_info->outputBufferDacTime - time_info->inputBufferAdcTime;
+            if (loop > 0.0 && loop <= kMaxPlausibleLoopDelaySeconds) {
+                self->loop_delay_s_.store(loop, std::memory_order_relaxed);
+            }
+        }
+    }
     if (!self || (!self->callback_ && !self->callback_ex_)) {
         // Fill output with silence if no callback
         if (output_buffer) {
@@ -391,6 +413,8 @@ bool AudioDuplexStream::open(const AudioDuplexConfig& config) {
         return false;
     }
 
+    loop_delay_s_.store(0.0, std::memory_order_relaxed);
+    xrun_count_.store(0, std::memory_order_relaxed);
     input_device_index_ = inputDevice;
     output_device_index_ = outputDevice;
     actual_sample_rate_ = config.sample_rate;
