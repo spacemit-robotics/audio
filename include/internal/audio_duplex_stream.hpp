@@ -28,6 +28,7 @@
 
 #include <functional>
 #include <atomic>
+#include <cstdint>
 #include <vector>
 #include <string>
 
@@ -152,6 +153,10 @@ public:
     int getInputDeviceIndex() const { return input_device_index_; }
     int getOutputDeviceIndex() const { return output_device_index_; }
 
+    // Measured in the PortAudio callback and reset by open(); safe to read from any thread.
+    double getLoopDelaySeconds() const { return loop_delay_s_.load(std::memory_order_relaxed); }
+    uint64_t getXrunCount() const { return xrun_count_.load(std::memory_order_relaxed); }
+
     // -------------------------------------------------------------------------
     // Static Utilities
     // -------------------------------------------------------------------------
@@ -203,6 +208,8 @@ private:
 
     std::atomic<bool> is_running_;
     std::atomic<bool> is_open_;
+    std::atomic<double> loop_delay_s_{0.0};  // last output DAC time - input ADC time
+    std::atomic<uint64_t> xrun_count_{0};    // callbacks flagged input overflow / output underflow
 
     // RISC-V alignment buffers for unaligned PortAudio data
     std::vector<float> aligned_input_buffer_;

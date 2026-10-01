@@ -12,7 +12,6 @@
 #include <portaudio.h>
 
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -84,17 +83,6 @@ namespace {
 // AudioDuplexStream Implementation
 // ============================================================================
 
-
-#include <atomic>
-#include <cstdint>
-#include <cstdio>
-static std::atomic<double> g_pa_loop_delay_s{0.0};
-static std::atomic<uint64_t> g_pa_callbacks{0};
-static std::atomic<uint64_t> g_pa_in_overflow{0};
-static std::atomic<uint64_t> g_pa_out_underflow{0};
-extern "C" double spacemit_audio_duplex_last_loop_delay_seconds() { return g_pa_loop_delay_s.load(std::memory_order_relaxed); }
-extern "C" unsigned long spacemit_audio_duplex_xruns() { return static_cast<unsigned long>(g_pa_in_overflow.load() + g_pa_out_underflow.load()); }
-
 AudioDuplexStream::AudioDuplexStream()
     : stream_(nullptr)
     , callback_(nullptr)
@@ -128,6 +116,8 @@ AudioDuplexStream::AudioDuplexStream(AudioDuplexStream&& other) noexcept
     , output_device_index_(other.output_device_index_)
     , is_running_(other.is_running_.load())
     , is_open_(other.is_open_.load())
+    , loop_delay_s_(other.loop_delay_s_.load())
+    , xrun_count_(other.xrun_count_.load())
     , aligned_input_buffer_(std::move(other.aligned_input_buffer_))
     , aligned_output_buffer_(std::move(other.aligned_output_buffer_))
     , frames_per_buffer_(other.frames_per_buffer_) {
@@ -152,6 +142,8 @@ AudioDuplexStream& AudioDuplexStream::operator=(AudioDuplexStream&& other) noexc
         output_device_index_ = other.output_device_index_;
         is_running_.store(other.is_running_.load());
         is_open_.store(other.is_open_.load());
+        loop_delay_s_.store(other.loop_delay_s_.load());
+        xrun_count_.store(other.xrun_count_.load());
         aligned_input_buffer_ = std::move(other.aligned_input_buffer_);
         aligned_output_buffer_ = std::move(other.aligned_output_buffer_);
         frames_per_buffer_ = other.frames_per_buffer_;
@@ -192,26 +184,20 @@ int AudioDuplexStream::paCallback(const void* input_buffer,
                                     const PaStreamCallbackTimeInfo* time_info,
                                     PaStreamCallbackFlags status_flags,
                                     void* user_data) {
-    // Timing diagnostics + loop-delay export for the software AEC reference alignment.
-    // outputBufferDacTime - inputBufferAdcTime is the delay between the capture frame
-    // handed to this callback and the moment the output frame written here reaches the DAC.
-    if (status_flags & paInputOverflow) g_pa_in_overflow.fetch_add(1, std::memory_order_relaxed);
-    if (status_flags & paOutputUnderflow) g_pa_out_underflow.fetch_add(1, std::memory_order_relaxed);
-    if (time_info) {
-        const double loop = time_info->outputBufferDacTime - time_info->inputBufferAdcTime;
-        if (loop > 0 && loop < 2.0) g_pa_loop_delay_s.store(loop, std::memory_order_relaxed);
-        const uint64_t n = g_pa_callbacks.fetch_add(1, std::memory_order_relaxed) + 1;
-        static const bool diag = std::getenv("AEC_DIAG") != nullptr;
-        if (diag && n % 100 == 0) {
-            std::fprintf(stderr, "[AudioDuplexStream][pa] cb=%llu in_overflow=%lu out_underflow=%lu adc->now=%.1fms now->dac=%.1fms loop=%.1fms\n",
-                static_cast<unsigned long long>(n),
-                static_cast<unsigned long>(g_pa_in_overflow.load()), static_cast<unsigned long>(g_pa_out_underflow.load()),
-                (time_info->currentTime - time_info->inputBufferAdcTime) * 1000.0,
-                (time_info->outputBufferDacTime - time_info->currentTime) * 1000.0, loop * 1000.0);
+    AudioDuplexStream* self = static_cast<AudioDuplexStream*>(user_data);
+    if (self) {
+        // Real-time thread: only lock-free stores here, no I/O.
+        if (status_flags & (paInputOverflow | paOutputUnderflow)) {
+            self->xrun_count_.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (time_info) {
+            // Capture buffer handed to this callback -> output written here reaches the DAC.
+            const double loop = time_info->outputBufferDacTime - time_info->inputBufferAdcTime;
+            if (loop > 0.0 && loop < 2.0) {
+                self->loop_delay_s_.store(loop, std::memory_order_relaxed);
+            }
         }
     }
-
-    AudioDuplexStream* self = static_cast<AudioDuplexStream*>(user_data);
     if (!self || (!self->callback_ && !self->callback_ex_)) {
         // Fill output with silence if no callback
         if (output_buffer) {
@@ -419,6 +405,8 @@ bool AudioDuplexStream::open(const AudioDuplexConfig& config) {
         return false;
     }
 
+    loop_delay_s_.store(0.0, std::memory_order_relaxed);
+    xrun_count_.store(0, std::memory_order_relaxed);
     if (const PaStreamInfo* si = Pa_GetStreamInfo(static_cast<PaStream*>(stream_))) {
         std::cout << "[AudioDuplexStream] Actual stream latency: input " << si->inputLatency * 1000
             << " ms, output " << si->outputLatency * 1000 << " ms" << std::endl;

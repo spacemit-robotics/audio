@@ -19,6 +19,7 @@
 #ifndef AUDIO_DUPLEX_HPP
 #define AUDIO_DUPLEX_HPP
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -135,6 +136,18 @@ public:
     int GetOutputChannels() const;
     int GetInputDevice() const;
     int GetOutputDevice() const;
+
+    /**
+     * Delay from the capture buffer handed to the callback to the moment the
+     * output written in that callback reaches the DAC, in seconds (PortAudio
+     * timestamps). 0 until a callback reports valid timing; reset by Start().
+     */
+    double GetLoopDelaySeconds() const;
+
+    /**
+     * Callbacks that reported an input overflow or an output underflow since Start().
+     */
+    uint64_t GetXrunCount() const;
 
     // -------------------------------------------------------------------------
     // Static Utilities
