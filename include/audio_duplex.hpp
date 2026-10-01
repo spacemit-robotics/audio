@@ -140,7 +140,8 @@ public:
     /**
      * Delay from the capture buffer handed to the callback to the moment the
      * output written in that callback reaches the DAC, in seconds (PortAudio
-     * timestamps). 0 until a callback reports valid timing; reset by Start().
+     * timestamps). Callback values outside (0, 2] s are ignored as bogus.
+     * 0 means no valid measurement yet; reset each time Start() opens the stream.
      */
     double GetLoopDelaySeconds() const;
 

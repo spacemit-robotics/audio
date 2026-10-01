@@ -11,6 +11,8 @@
 
 #include <portaudio.h>
 
+#include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -27,6 +29,12 @@
 
 namespace {
     constexpr size_t kDefaultCallbackBufferFrames = 4096;
+    // Callback loop delays outside (0, 2] s are bogus timestamps and are ignored.
+    constexpr double kMaxPlausibleLoopDelaySeconds = 2.0;
+
+    // The real-time callback stores into these; they must never fall back to a lock.
+    static_assert(std::atomic<double>::is_always_lock_free, "loop delay atomic must be lock-free");
+    static_assert(std::atomic<uint64_t>::is_always_lock_free, "xrun counter atomic must be lock-free");
 
     static int g_pa_ref_count = 0;
     static std::mutex g_pa_mutex;
@@ -193,7 +201,7 @@ int AudioDuplexStream::paCallback(const void* input_buffer,
         if (time_info) {
             // Capture buffer handed to this callback -> output written here reaches the DAC.
             const double loop = time_info->outputBufferDacTime - time_info->inputBufferAdcTime;
-            if (loop > 0.0 && loop < 2.0) {
+            if (loop > 0.0 && loop <= kMaxPlausibleLoopDelaySeconds) {
                 self->loop_delay_s_.store(loop, std::memory_order_relaxed);
             }
         }
@@ -407,10 +415,6 @@ bool AudioDuplexStream::open(const AudioDuplexConfig& config) {
 
     loop_delay_s_.store(0.0, std::memory_order_relaxed);
     xrun_count_.store(0, std::memory_order_relaxed);
-    if (const PaStreamInfo* si = Pa_GetStreamInfo(static_cast<PaStream*>(stream_))) {
-        std::cout << "[AudioDuplexStream] Actual stream latency: input " << si->inputLatency * 1000
-            << " ms, output " << si->outputLatency * 1000 << " ms" << std::endl;
-    }
     input_device_index_ = inputDevice;
     output_device_index_ = outputDevice;
     actual_sample_rate_ = config.sample_rate;
